@@ -2,3 +2,4 @@ node_modules/
 dist/
 dev-data/
 .DS_Store
+.claude/launch.json

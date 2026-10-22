@@ -70,13 +70,6 @@ function targetFor(data, memberId, item, dates) {
 // Weekly yes/no items are a single tick; members don't set goals for those.
 const hasPersonalGoal = (it) => !(it.type === 'check' && it.entry === 'weekly');
 
-function setGoal(data, memberId, item, value, fromWeek) {
-  const goals = data.goals || (data.goals = {});
-  const mine = goals[memberId] || (goals[memberId] = {});
-  const hist = (mine[item.id] || []).filter((e) => e.from < fromWeek);
-  hist.push({ from: fromWeek, value });
-  mine[item.id] = hist;
-}
 
 function goalsList(data, member, weekStart) {
   return sortedItems(data)
@@ -87,10 +80,6 @@ function goalsList(data, member, weekStart) {
     });
 }
 
-function removeGoals(data, { memberId, itemId }) {
-  if (memberId) delete data.goals[memberId];
-  if (itemId) for (const mine of Object.values(data.goals)) delete mine[itemId];
-}
 
 // Completion = average over the member's goal items of min(total / goal, 1).
 function score(data, items, member, totals, dates, periodEnd) {
@@ -233,37 +222,7 @@ function history(data, member, weeks) {
   return { items: items.map(publicItem), weeks: rows };
 }
 
-function setEntry(data, memberId, item, date, value) {
-  const ent = data.entries[memberId] || (data.entries[memberId] = {});
-  const put = (d, v) => {
-    if (v > 0) {
-      (ent[d] || (ent[d] = {}))[item.id] = v;
-    } else if (ent[d]) {
-      delete ent[d][item.id];
-      if (!Object.keys(ent[d]).length) delete ent[d];
-    }
-  };
-  if (item.entry === 'weekly') {
-    // Weekly items keep a single value on the first day of the week.
-    const ws = D.weekStartOf(date, data.settings.weekStart);
-    for (const d of D.range(ws, D.addDays(ws, 6))) put(d, 0);
-    put(ws, value);
-  } else {
-    put(date, value);
-  }
-  if (!Object.keys(ent).length) delete data.entries[memberId];
-}
 
-function removeItemEntries(data, itemId) {
-  for (const memberId of Object.keys(data.entries)) {
-    const ent = data.entries[memberId];
-    for (const d of Object.keys(ent)) {
-      delete ent[d][itemId];
-      if (!Object.keys(ent[d]).length) delete ent[d];
-    }
-    if (!Object.keys(ent).length) delete data.entries[memberId];
-  }
-}
 
 // ---------- CSV ----------
 
@@ -332,11 +291,7 @@ module.exports = {
   trend,
   sheet,
   history,
-  setEntry,
-  removeItemEntries,
-  setGoal,
   goalsList,
-  removeGoals,
   hasPersonalGoal,
   summaryCsv,
   entriesCsv,

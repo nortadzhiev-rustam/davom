@@ -157,23 +157,23 @@ function createAppServer({ store, publicDir, version, dataDir, openDataDir }) {
     const b = ctx.body;
     const password = typeof b.password === 'string' ? b.password : '';
     if (password.length < 4) throw bad('err_password_short');
-    const s = settings();
-    s.orgName = str(b.orgName, 80);
-    s.language = LANGS.includes(b.language) ? b.language : 'en';
-    s.weekStart = [0, 1, 6].includes(b.weekStart) ? b.weekStart : 1;
-    s.csvDelimiter = s.language === 'en' ? ',' : ';';
-    data().admin = hashSecret(password);
-    if (Array.isArray(b.sampleItems)) {
-      b.sampleItems.slice(0, 10).forEach((it, i) => {
-        data().items.push({
-          id: newId(), name: str(it.name, 80, true), unit: str(it.unit, 20), type: it.type === 'check' ? 'check' : 'number',
-          entry: it.entry === 'weekly' ? 'weekly' : 'daily', weeklyTarget: num(it.weeklyTarget || 0, 0, 1e6),
-          points: num(it.points || 0, 0, 1e4), groupIds: [], color: COLOR_RE.test(it.color) ? it.color : '#2f7d5b',
-          active: true, description: '', order: i, createdAt: D.today(),
-        });
+    const language = LANGS.includes(b.language) ? b.language : 'en';
+    const items = (Array.isArray(b.sampleItems) ? b.sampleItems.slice(0, 10) : []).map((it, i) => ({
+      id: newId(), name: str(it.name, 80, true), unit: str(it.unit, 20), type: it.type === 'check' ? 'check' : 'number',
+      entry: it.entry === 'weekly' ? 'weekly' : 'daily', weeklyTarget: num(it.weeklyTarget || 0, 0, 1e6),
+      points: num(it.points || 0, 0, 1e4), groupIds: [], color: COLOR_RE.test(it.color) ? it.color : '#2f7d5b',
+      active: true, description: '', order: i, createdAt: D.today(),
+    }));
+    store.transaction(() => {
+      store.updateSettings({
+        orgName: str(b.orgName, 80),
+        language,
+        weekStart: [0, 1, 6].includes(b.weekStart) ? b.weekStart : 1,
+        csvDelimiter: language === 'en' ? ',' : ';',
       });
-    }
-    store.save();
+      store.setAdmin(hashSecret(password));
+      store.addItems(items);
+    });
     return { token: sessions.create('admin') };
   });
 
@@ -244,8 +244,7 @@ function createAppServer({ store, publicDir, version, dataDir, openDataDir }) {
       if (!memberCanEdit(ws)) throw new HttpError(403, 'err_week_locked');
       if (item.entry === 'daily' && b.date > D.today()) throw new HttpError(403, 'err_future_date');
     }
-    L.setEntry(data(), m.id, item, b.date, value);
-    store.save();
+    store.setEntry(m.id, item, b.date, value);
     return sheetFor(ctx, m, b.date);
   });
 
@@ -270,8 +269,7 @@ function createAppServer({ store, publicDir, version, dataDir, openDataDir }) {
     const max = item.type === 'check' ? 7 : 1e6;
     const value = b.value === null || b.value === '' || b.value === undefined ? null : num(b.value, 0, max);
     const ws = D.weekStartOf(D.today(), settings().weekStart);
-    L.setGoal(data(), m.id, item, value, ws);
-    store.save();
+    store.setGoal(m.id, item.id, value, ws);
     return { weekStart: ws, items: L.goalsList(data(), m, ws) };
   });
 
@@ -288,30 +286,27 @@ function createAppServer({ store, publicDir, version, dataDir, openDataDir }) {
 
   route('PUT', '/api/admin/settings', 'admin', (ctx) => {
     const b = ctx.body;
-    const s = settings();
-    if (b.orgName !== undefined) s.orgName = str(b.orgName, 80);
-    if (b.language !== undefined) s.language = LANGS.includes(b.language) ? b.language : s.language;
-    if (b.weekStart !== undefined) s.weekStart = [0, 1, 6].includes(b.weekStart) ? b.weekStart : s.weekStart;
-    if (b.memberEditWeeks !== undefined) s.memberEditWeeks = Math.round(num(b.memberEditWeeks, 0, 10000));
-    if (b.csvDelimiter !== undefined) s.csvDelimiter = b.csvDelimiter === ';' ? ';' : ',';
-    if (b.fillDay !== undefined) s.fillDay = [0, 1, 2, 3, 4, 5, 6].includes(b.fillDay) ? b.fillDay : null;
-    if (b.allowAdminRemote !== undefined) {
-      s.allowAdminRemote = !!b.allowAdminRemote;
-      if (!s.allowAdminRemote) {
-        // Remote admin sessions can't be told apart, so sign out every admin except this request.
-        for (const [t, sess] of sessions.map) if (sess.role === 'admin' && t !== ctx.token) sessions.delete(t);
-      }
+    const patch = {};
+    if (b.orgName !== undefined) patch.orgName = str(b.orgName, 80);
+    if (LANGS.includes(b.language)) patch.language = b.language;
+    if ([0, 1, 6].includes(b.weekStart)) patch.weekStart = b.weekStart;
+    if (b.memberEditWeeks !== undefined) patch.memberEditWeeks = Math.round(num(b.memberEditWeeks, 0, 10000));
+    if (b.csvDelimiter !== undefined) patch.csvDelimiter = b.csvDelimiter === ';' ? ';' : ',';
+    if (b.fillDay !== undefined) patch.fillDay = [0, 1, 2, 3, 4, 5, 6].includes(b.fillDay) ? b.fillDay : null;
+    if (b.allowAdminRemote !== undefined) patch.allowAdminRemote = !!b.allowAdminRemote;
+    store.updateSettings(patch);
+    if (patch.allowAdminRemote === false) {
+      // Remote admin sessions can't be told apart, so sign out every admin except this request.
+      for (const [t, sess] of sessions.map) if (sess.role === 'admin' && t !== ctx.token) sessions.delete(t);
     }
-    store.save();
-    return { settings: { ...s } };
+    return { settings: { ...settings() } };
   });
 
   route('POST', '/api/admin/password', 'admin', (ctx) => {
     const { current, next } = ctx.body;
     if (!verifySecret(current || '', data().admin)) throw new HttpError(401, 'err_wrong_password');
     if (typeof next !== 'string' || next.length < 4) throw bad('err_password_short');
-    data().admin = hashSecret(next);
-    store.save();
+    store.setAdmin(hashSecret(next));
     for (const [t, sess] of sessions.map) if (sess.role === 'admin' && t !== ctx.token) sessions.delete(t);
     return { ok: true };
   });
@@ -322,23 +317,17 @@ function createAppServer({ store, publicDir, version, dataDir, openDataDir }) {
   }
   route('POST', '/api/admin/groups', 'admin', (ctx) => {
     const g = { id: newId(), ...readGroup(ctx.body) };
-    data().groups.push(g);
-    store.save();
+    store.addGroup(g);
     return g;
   });
   route('PUT', '/api/admin/groups/:id', 'admin', (ctx) => {
     const g = data().groups.find((x) => x.id === ctx.params.id);
     if (!g) throw new HttpError(404, 'err_not_found');
-    Object.assign(g, readGroup(ctx.body));
-    store.save();
+    store.updateGroup(g, readGroup(ctx.body));
     return g;
   });
   route('DELETE', '/api/admin/groups/:id', 'admin', (ctx) => {
-    const id = ctx.params.id;
-    data().groups = data().groups.filter((g) => g.id !== id);
-    for (const m of data().members) if (m.groupId === id) m.groupId = null;
-    for (const it of data().items) it.groupIds = (it.groupIds || []).filter((g) => g !== id);
-    store.save();
+    store.deleteGroup(ctx.params.id);
     return { ok: true };
   });
 
@@ -346,24 +335,20 @@ function createAppServer({ store, publicDir, version, dataDir, openDataDir }) {
   function validGroup(id) {
     return id && data().groups.some((g) => g.id === id) ? id : null;
   }
-  function applyPin(m, pin) {
-    if (pin === undefined) return;
-    if (pin === null || pin === '') {
-      m.pin = null;
-      return;
-    }
+  // undefined = keep, null / '' = remove, digits = set a new PIN.
+  function readPin(pin) {
+    if (pin === undefined) return undefined;
+    if (pin === null || pin === '') return null;
     if (!/^\d{4,8}$/.test(String(pin))) throw bad('err_pin_format');
-    m.pin = hashSecret(String(pin));
+    return hashSecret(String(pin));
   }
   route('POST', '/api/admin/members', 'admin', (ctx) => {
     const b = ctx.body;
     const m = {
       id: newId(), name: str(b.name, 80, true), groupId: validGroup(b.groupId), active: b.active !== false,
-      note: str(b.note, 200), pin: null, createdAt: D.today(),
+      note: str(b.note, 200), pin: readPin(b.pin) || null, createdAt: D.today(),
     };
-    applyPin(m, b.pin);
-    data().members.push(m);
-    store.save();
+    store.addMembers([m]);
     return L.publicMember(m);
   });
   route('POST', '/api/admin/members/bulk', 'admin', (ctx) => {
@@ -373,32 +358,28 @@ function createAppServer({ store, publicDir, version, dataDir, openDataDir }) {
       .slice(0, 500);
     if (!names.length) throw bad('err_required');
     const groupId = validGroup(ctx.body.groupId);
-    for (const name of names) {
-      data().members.push({ id: newId(), name, groupId, active: true, note: '', pin: null, createdAt: D.today() });
-    }
-    store.save();
+    store.addMembers(names.map((name) => ({ id: newId(), name, groupId, active: true, note: '', pin: null, createdAt: D.today() })));
     return { added: names.length };
   });
   route('PUT', '/api/admin/members/:id', 'admin', (ctx) => {
     const m = findMember(ctx.params.id);
     const b = ctx.body;
-    if (b.name !== undefined) m.name = str(b.name, 80, true);
-    if (b.groupId !== undefined) m.groupId = validGroup(b.groupId);
-    if (b.note !== undefined) m.note = str(b.note, 200);
-    if (b.active !== undefined) m.active = !!b.active;
-    applyPin(m, b.pin);
+    const patch = {};
+    if (b.name !== undefined) patch.name = str(b.name, 80, true);
+    if (b.groupId !== undefined) patch.groupId = validGroup(b.groupId);
+    if (b.note !== undefined) patch.note = str(b.note, 200);
+    if (b.active !== undefined) patch.active = !!b.active;
+    const pin = readPin(b.pin);
+    if (pin !== undefined) patch.pin = pin;
+    store.updateMember(m, patch);
     if (!m.active || b.pin !== undefined) sessions.dropMember(m.id);
-    store.save();
     return L.publicMember(m);
   });
   route('DELETE', '/api/admin/members/:id', 'admin', (ctx) => {
     const id = ctx.params.id;
     findMember(id);
-    data().members = data().members.filter((m) => m.id !== id);
-    delete data().entries[id];
-    L.removeGoals(data(), { memberId: id });
+    store.deleteMember(id);
     sessions.dropMember(id);
-    store.save();
     return { ok: true };
   });
 
@@ -421,39 +402,22 @@ function createAppServer({ store, publicDir, version, dataDir, openDataDir }) {
   route('POST', '/api/admin/items', 'admin', (ctx) => {
     const order = data().items.reduce((a, it) => Math.max(a, it.order + 1), 0);
     const it = { id: newId(), ...readItem(ctx.body), order, createdAt: D.today() };
-    data().items.push(it);
-    store.save();
+    store.addItems([it]);
     return L.publicItem(it);
   });
   route('PUT', '/api/admin/items/:id', 'admin', (ctx) => {
     const it = findItem(ctx.params.id);
-    const next = readItem(ctx.body, it);
-    if (it.type === 'number' && next.type === 'check') {
-      // Turning a number into yes/no: anything above zero becomes "yes".
-      for (const ent of Object.values(data().entries)) {
-        for (const day of Object.values(ent)) if (day[it.id] > 0) day[it.id] = 1;
-      }
-    }
-    Object.assign(it, next);
-    store.save();
+    store.updateItem(it, readItem(ctx.body, it));
     return L.publicItem(it);
   });
   route('DELETE', '/api/admin/items/:id', 'admin', (ctx) => {
     const id = ctx.params.id;
     findItem(id);
-    data().items = data().items.filter((it) => it.id !== id);
-    L.removeItemEntries(data(), id);
-    L.removeGoals(data(), { itemId: id });
-    store.save();
+    store.deleteItem(id);
     return { ok: true };
   });
   route('POST', '/api/admin/items/order', 'admin', (ctx) => {
-    const ids = Array.isArray(ctx.body.ids) ? ctx.body.ids : [];
-    ids.forEach((id, i) => {
-      const it = data().items.find((x) => x.id === id);
-      if (it) it.order = i;
-    });
-    store.save();
+    store.setItemOrder(Array.isArray(ctx.body.ids) ? ctx.body.ids : []);
     return { ok: true };
   });
 
@@ -501,13 +465,10 @@ function createAppServer({ store, publicDir, version, dataDir, openDataDir }) {
     if (!raw || typeof raw !== 'object' || !raw.admin || !Array.isArray(raw.members) || !Array.isArray(raw.items)) {
       throw bad('err_invalid_backup');
     }
-    const keepPort = settings().port;
-    const keepLan = settings().lanEnabled;
-    store.replace(raw);
     // Network settings belong to this computer, not to the backup.
-    settings().port = keepPort;
-    settings().lanEnabled = keepLan;
-    store.save();
+    const keep = { port: settings().port, lanEnabled: settings().lanEnabled };
+    store.replaceAll(raw);
+    store.updateSettings(keep);
     sessions.clear();
     return { ok: true };
   });
@@ -521,8 +482,7 @@ function createAppServer({ store, publicDir, version, dataDir, openDataDir }) {
 
   route('POST', '/api/admin/network', 'admin', (ctx) => {
     if (!ctx.isLocal) throw new HttpError(403, 'err_admin_local_only');
-    settings().lanEnabled = !!ctx.body.enabled;
-    store.save();
+    store.updateSettings({ lanEnabled: !!ctx.body.enabled });
     // Re-bind after this response has been sent.
     setTimeout(() => restart().catch((e) => console.error('restart failed', e)), 150);
     return { ok: true };

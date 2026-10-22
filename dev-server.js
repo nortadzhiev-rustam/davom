@@ -15,3 +15,10 @@ const server = createAppServer({
   openDataDir: () => console.log('Data folder:', dataDir),
 });
 server.start().then(() => console.log(`Davom running at ${server.url()} (data: ${dataDir})`));
+
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, () => {
+    store.close();
+    process.exit(0);
+  });
+}

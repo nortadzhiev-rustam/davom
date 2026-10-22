@@ -6,6 +6,7 @@ const { createAppServer } = require('./server/server');
 
 let win = null;
 let server = null;
+let store = null;
 
 if (!app.requestSingleInstanceLock()) {
   // Another copy is already running; it will focus its window.
@@ -22,7 +23,7 @@ if (!app.requestSingleInstanceLock()) {
     // DAVOM_DATA lets you keep the data somewhere else (for example on a USB stick).
     const dataDir = process.env.DAVOM_DATA || app.getPath('userData');
     try {
-      const store = new Store(dataDir);
+      store = new Store(dataDir);
       server = createAppServer({
         store,
         publicDir: path.join(__dirname, 'public'),
@@ -49,6 +50,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', () => {
     if (server) server.stop();
+    if (store) store.close();
   });
 }
 

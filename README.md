@@ -16,15 +16,23 @@ Everything runs on one computer. No internet, no account, no cloud.
 - **Dashboard.** Average completion, who hasn't filled in the due week yet, top members, per-item totals and an 8-week trend.
 - **Member history.** Each member's last 8/12/26 weeks, as a chart and a table.
 - **Optional local network mode.** Members can fill in from their phones over the same Wi-Fi (still no internet). There's a QR code to open it, and by default the admin panel only opens on the main computer.
-- **Backups.** An automatic daily backup (the last 30 are kept), plus manual backup download and restore.
+- **Backups.** An automatic daily snapshot of the database (the last 30 are kept), plus a portable backup file you can download and restore.
 - **Languages and themes.** English, Türkçe, O'zbekcha and Тоҷикӣ (Tajik), in light or dark mode.
 
 ## Where the data lives
 
-One JSON file, `davom-data.json`, with a `backups/` folder next to it:
+All data is in one SQLite database, `davom.db`, with a `backups/` folder next to it:
 
 - **Windows:** `%APPDATA%\Davom\`
 - **macOS:** `~/Library/Application Support/Davom/`
+
+SQLite comes built into Electron (`node:sqlite`), so there are no native modules to compile and both installers build from one machine.
+
+- **Tables:** `settings`, `member_groups`, `members`, `items`, `item_groups`, `entries` (one row per member, day and item) and `goals` (each member's goal history). Every change is written in its own transaction.
+- **Automatic backups:** once a day the app writes a consistent copy of the database to `backups/davom-<date>.db`. To recover, quit the app and copy one of them over `davom.db`.
+- **Manual backups:** *Settings → Backup* downloads a portable JSON file, and *Restore* loads one back.
+- **Looking inside:** quit the app, then open `davom.db` in any SQLite tool, such as DB Browser for SQLite. While the app runs you'll also see `davom.db-wal` and `davom.db-shm`; those belong to the database, so quit the app before copying it by hand.
+- **Older versions:** data from versions that stored `davom-data.json` is imported automatically the first time this version starts, and the old file is renamed to `davom-data.json.imported`.
 
 To keep the data somewhere else (a USB stick, a shared folder), start the app with the environment variable `DAVOM_DATA` set to that folder.
 
@@ -42,7 +50,7 @@ Project layout:
 
 ```
 main.js            Electron entry: starts the local server and opens the window
-server/            Local HTTP server, JSON storage, auth, reports (plain Node, no framework)
+server/            Local HTTP server, SQLite storage, auth, reports (plain Node, no framework)
 public/            The web UI (Preact + htm, vendored, no build step)
 build/icon.png     App icon (regenerate with: npm run icon)
 ```
