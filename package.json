@@ -1,0 +1,81 @@
+{
+  "name": "davom",
+  "productName": "Davom",
+  "version": "1.0.0",
+  "description": "Offline weekly follow-up tracker (a digital çetele)",
+  "main": "main.js",
+  "author": "Davom",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dev": "node dev-server.js",
+    "icon": "electron scripts/make-icon.js",
+    "dist:mac": "electron-builder --mac",
+    "dist:win": "electron-builder --win",
+    "dist": "electron-builder --mac --win"
+  },
+  "dependencies": {
+    "qrcode": "1.5.4"
+  },
+  "devDependencies": {
+    "electron": "45.0.0",
+    "electron-builder": "26.15.3",
+    "htm": "3.1.1"
+  },
+  "build": {
+    "appId": "app.davom.desktop",
+    "productName": "Davom",
+    "copyright": "Davom",
+    "files": [
+      "main.js",
+      "server/**",
+      "public/**",
+      "build/icon.png",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png",
+      "identity": "-",
+      "artifactName": "Davom-${version}-mac-${arch}.${ext}",
+      "hardenedRuntime": false
+    },
+    "dmg": {
+      "title": "Davom ${version}"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.png",
+      "artifactName": "Davom-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Davom",
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
